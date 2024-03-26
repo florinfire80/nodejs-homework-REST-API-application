@@ -20,10 +20,24 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  verify: {
+    type: Boolean,
+    default: false,
+  },
+  verificationToken: {
+    type: String,
+    required: [true, "Verify token is required"],
+  },
 });
 
 userSchema.statics.findByUserId = async function (userId) {
   return this.findOne({ _id: userId });
+};
+
+userSchema.statics.findByVerificationToken = async function (
+  verificationToken
+) {
+  return this.findOne({ verificationToken });
 };
 
 const User = mongoose.model("User", userSchema);
