@@ -9,13 +9,14 @@ const fs = require("fs");
 const path = require("path");
 const Jimp = require("jimp");
 const axios = require("axios");
-// const https = require("https");
+const { v4: uuidv4 } = require("uuid");
 
 const {
   protectRoute,
   authenticateToken,
 } = require("../middleware/authMiddleware");
 const usersController = require("../controllers/usersController");
+const transporter = require("./nodemailerConfig");
 
 dotenv.config();
 const router = express.Router();
@@ -23,7 +24,6 @@ const saltRounds = 10;
 const jwtSecret = process.env.JWT_SECRET;
 const UPLOAD_DIR = path.join(__dirname, "..", "tmp");
 const AVATARS_DIR = path.join(__dirname, "..", "public", "avatars");
-// const AVATARS_URL = "/avatars";
 
 const joiSchema = Joi.object({
   email: Joi.string().email().required(),
@@ -41,8 +41,8 @@ router.get("/", async (req, res) => {
 // Signup route /users/signup
 // RequestBody: {
 //   "email": "example@example.com",
-//   "password": "examplepassword"
-// }
+//   "password": "examplepassword"}
+
 router.post("/signup", async (req, res) => {
   try {
     const { error } = joiSchema.validate(req.body);
@@ -61,13 +61,28 @@ router.post("/signup", async (req, res) => {
     // The passsword should never be saved as plain text
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
+    // Generarea verificationToken folosind uuid
+    const verificationToken = uuidv4();
+
+    // Crearea unui nou utilizator cu datele furnizate și tokenul de verificare generat
     const newUser = new User({
       email,
       password: hashedPassword,
       avatarURL: avatar,
+      verificationToken,
     });
 
     await newUser.save();
+
+    // Trimit e-mailul către utilizator
+    const mailOptions = {
+      from: process.env.EMAIL_USERNAME,
+      to: email,
+      subject: "Verify Your Email Address",
+      html: `<p>Please click <a href="http://localhost:3000/users/verify/${verificationToken}">here</a> to verify your email address.</p>`,
+    };
+
+    await transporter.sendMail(mailOptions);
 
     res
       .status(201)
@@ -83,8 +98,7 @@ router.post("/signup", async (req, res) => {
 // Login route
 // RequestBody: {
 //   "email": "example@example.com",
-//   "password": "examplepassword"
-// }
+//   "password": "examplepassword"}
 router.post("/login", async (req, res) => {
   try {
     const { error } = joiSchema.validate(req.body);
@@ -97,6 +111,11 @@ router.post("/login", async (req, res) => {
 
     if (!user) {
       return res.status(404).send("User not found");
+    }
+
+    // Verific dacă utilizatorul a fost verificat
+    if (!user.verify) {
+      return res.status(401).json({ message: "Email not verified" });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -218,6 +237,93 @@ router.patch("/avatars", authenticateToken, async (req, res) => {
     res
       .status(500)
       .json({ message: "Error updating avatar", error: error.message });
+  }
+});
+
+// GET  /users/verify/:verificationToken
+router.get("/verify/:verificationToken", async (req, res) => {
+  try {
+    const { verificationToken } = req.params;
+
+    // Caută utilizatorul în baza de date folosind token-ul de verificare
+    const user = await User.findByVerificationToken(verificationToken);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Verifică dacă există un token de verificare înainte de a încerca să actualizezi utilizatorul
+    if (!user.verificationToken) {
+      return res
+        .status(400)
+        .json({ message: "Verification token has already been used" });
+    }
+
+    // Verific dacă utilizatorul a fost deja verificat
+    if (user.verify) {
+      return res.status(400).json({ message: "User already verified" });
+    }
+
+    // Actualizează starea de verificare a utilizatorului
+    user.verify = true;
+    delete user.verificationToken;
+
+    await user.save(); // Salvează modificările în baza de date
+
+    // Răspunde cu un mesaj de succes
+    res.status(200).json({ message: "Verification successful" });
+  } catch (error) {
+    console.error("Error verifying user:", error);
+    res.status(500).json({
+      message: "Internal Server Error.",
+    });
+  }
+});
+
+// POST /users/verify
+// Content-Type: application/json
+// RequestBody: {
+//   "email": "example@example.com"}
+router.post("/verify", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Verifică dacă adresa de e-mail este furnizată în corpul cererii
+    if (!email) {
+      return res.status(400).json({ message: "Missing required field email" });
+    }
+
+    // Găsiți utilizatorul asociat cu adresa de e-mail specificată
+    const user = await User.findOne({ email });
+
+    // Verificați dacă utilizatorul există
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Verificați dacă utilizatorul este deja verificat
+    if (user.verify) {
+      return res
+        .status(400)
+        .json({ message: "Verification has already been passed" });
+    }
+
+    // Configurațiile pentru e-mail
+    const mailOptions = {
+      from: process.env.EMAIL_USERNAME,
+      to: email,
+      subject: "Verify Your Email Address",
+      html: "<p>Please click <a href='http://localhost:3000/users/verify'>here</a> to verify your email address.</p>",
+    };
+
+    // Trimiterea e-mailului utilizând instanța existentă a transporterului
+    await transporter.sendMail(mailOptions);
+
+    // Răspunsul către client
+    res.status(200).json({ message: "Email sent successfully" });
+  } catch (error) {
+    console.error("Error sending email:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
