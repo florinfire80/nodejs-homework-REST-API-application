@@ -4,8 +4,8 @@ const app = require("../app");
 describe("Login Controller", () => {
   it("should return status code 200, token, and user object with email and subscription fields", async () => {
     const response = await request(app).post("/login").send({
-      username: "modelexample@example.com", //(Trebuie sa fie valid!)
-      password: "modelexample123456", //(Trebuie sa fie valid!)
+      username: "modelexample@example.com", // (Trebuie sa fie valid!)
+      password: "modelexample123456", // (Trebuie sa fie valid!)
     });
 
     // Verificăm status code-ul
